@@ -1,0 +1,22 @@
+# 统一行尾为 LF，避免 Windows 提交 CRLF 后 diff 全是整行变更
+* text=auto eol=lf
+
+# 明确二进制类型，避免 Git 尝试做文本 diff / 行尾转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.mp4  binary
+*.m4a  binary
+*.wav  binary
+*.mp3  binary
+*.pdf  binary
+*.zip  binary
+*.exe  binary
+*.bin  binary
+
+# Windows 专用脚本保留 CRLF（本项目目前没有，留作约定）
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+*.cmd  text eol=crlf

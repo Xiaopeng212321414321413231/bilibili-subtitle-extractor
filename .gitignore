@@ -1,0 +1,56 @@
+# —— Python ——
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# —— 凭证与环境（绝不入库）——
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+
+# —— 本项目的产物与缓存（体积巨大 / 含第三方内容，不要上传）——
+# 视频与音频缓存
+assets/
+audio60/
+audio_b/
+audio_tmp/
+audio/
+# 转写出的字幕文本（第三方视频内容的复制品）
+extracted/
+# 生成的图文笔记与截图
+notes/
+# faster-whisper 模型（461MB）
+models/
+# 学习笔记（第三方课程内容）
+modules/
+_sf/
+# 调试用接口快照
+bv_info.json
+p04_playurl.json
+
+# —— 编译/打包产物 ——
+dist/
+build/
+*.exe
+
+# —— 日志与临时文件 ——
+*.log
+test_results*.txt
+*.tmp
+*.bak
+
+# —— 编辑器 / 系统 ——
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# —— 历史遗留脚本（v1 分步脚本，功能已被 extract_bilibili.py 覆盖）——
+legacy/

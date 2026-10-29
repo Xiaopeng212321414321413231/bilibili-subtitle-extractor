@@ -1,0 +1,16 @@
+# 运行依赖。装完即可用，无需额外系统包（不需要 ffmpeg / yt-dlp）。
+#
+# 许可证：本项目以 MIT 分发，因此**刻意不含任何 GPL 依赖**。
+#   - B站 API 全部走 src/bili_subtitle.py 的纯 requests 实现（自带 WBI 签名），
+#     不依赖 bilibili-api-python（它是 GPL-3.0）。
+#   - 繁简转换用 opencc-python-reimplemented（Apache-2.0），
+#     不依赖 zhconv（它是 GPLv2+）；代码里另有 392 字内置表兜底。
+# 版本上限（<X）是刻意的：这些都是「大版本可能改接口」的包，锁住上限才可复现。
+
+requests>=2.31,<3
+python-dotenv>=1.0,<2
+faster-whisper>=1.2,<2
+qrcode>=7.4,<9
+Pillow>=10.0,<13
+av>=12.0,<14
+opencc-python-reimplemented>=0.1.7,<0.2
