@@ -157,13 +157,13 @@ def fmt_dur(sec) -> str:
     return f"{sec // 60}:{sec % 60:02d}" if sec < 3600 else f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
 
 
-def out_name(bvid: str, page: dict, total: int) -> str:
-    return f"{bvid}.txt" if total <= 1 else f"{bvid}_P{page['page']:02d}.txt"
+def note_dir_name(bvid: str, page_no: int) -> str:
+    """图文素材目录名：`<BV>_P<NN>`。
 
-
-def write_text(path: str, header: str, body: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(header + "\n\n" + body)
+    刻意不用视频标题做目录名 —— 标题里的 `/`、`..`、控制字符会造成路径注入，
+    而 bvid + 分P号已经能唯一定位。
+    """
+    return f"{bvid}_P{page_no:02d}"
 
 
 SOURCE_LABEL = {"cc": "官方CC字幕", "ai": "B站AI字幕"}
@@ -344,7 +344,13 @@ def process(bvid: str, client: BiliSubtitleClient, args, login_ok: bool = True) 
         for r in need:
             r.setdefault("sub_error", "无字幕，且 --no-whisper 已禁用转写")
 
-    # ---------- 阶段 3：落盘 ----------
+    # ---------- 阶段 3：生成图文素材（不再输出纯文本）----------
+    # 产物是 notes/<BV>_P<NN>/：transcript.md + frames.json + frames/ + contacts/
+    # 后续由 agent 读底稿挑帧写 note.md —— 文字与画面必须成对出现。
+    from types import SimpleNamespace
+
+    from src.bili_notes import build_note as build_note_assets
+
     ok, fail = 0, []
     for r in rows:
         item = texts.get(r["page"])
@@ -352,35 +358,51 @@ def process(bvid: str, client: BiliSubtitleClient, args, login_ok: bool = True) 
             fail.append(r["page"])
             summary["pages"].append({**r, "status": "failed", "error": r.get("sub_error") or r.get("transcribe_error")})
             continue
-        fname = out_name(bvid, r, len(pages))
-        header = (
-            f"# {view['title']}"
-            + (f" · P{r['page']:02d} {r['part']}" if len(pages) > 1 else "")
-            + f"\nUP主: {view['owner']} | 发布: {summary['pubdate']} | 时长: {fmt_dur(r['duration'])} "
-              f"| 来源: {item['source']}" + (f"({item['lan']})" if item["lan"] else "")
+
+        ns = SimpleNamespace(
+            target=bvid,
+            page=str(r["page"]),
+            skip_existing=args.skip_existing,
+            force=args.force,
+            no_whisper=args.no_whisper,
+            model=args.model,
+            chapters="",
+            auto_n=0,
+            quality=args.quality,
+            frames=args.frames,
+            cols=args.cols,
         )
-        write_text(os.path.join(OUT_DIR, fname), header, item["body"])
-        if args.srt and item.get("srt"):
-            with open(os.path.join(OUT_DIR, fname.replace(".txt", ".srt")), "w", encoding="utf-8") as f:
-                f.write(item["srt"])
+        try:
+            res = build_note_assets(ns, r["page"])
+        except Exception as e:  # noqa: BLE001
+            log.error("P%02d 图文素材生成失败：%s", r["page"], str(e)[:200])
+            fail.append(r["page"])
+            summary["pages"].append({**r, "status": "failed", "error": f"图文素材: {e}"})
+            continue
+
         ok += 1
         summary["pages"].append({**r, "status": "ok", "source": item["source"],
                                  "lang": item["lan"], "chars": item["chars"],
-                                 "cached": item["cached"], "file": fname})
+                                 "cached": item["cached"],
+                                 "frames": res.get("frames", 0),
+                                 "chapters": res.get("chapters", 0),
+                                 "out": f"notes/{bvid}_P{r['page']:02d}/"})
 
     summary["ok"] = ok
     summary["failed_pages"] = fail
     with open(os.path.join(OUT_DIR, f"{bvid}.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    log.info("完成 %d/%d，输出目录 extracted/", ok, len(rows))
+    log.info("完成 %d/%d，图文素材在 notes/", ok, len(rows))
     if fail:
         log.warning("失败分P: %s", fail)
     return summary
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="B站视频内容提取（字幕优先，无字幕才转写）")
+    ap = argparse.ArgumentParser(
+        description="B站视频 → 图文笔记素材（字幕 + 关键帧，缺一不出）。"
+                    "默认下载原视频抽帧，再结合字幕，产物是 notes/<BV>_P<NN>/")
     ap.add_argument("bvids", nargs="*", help="BV号 或 https://www.bilibili.com/video/BVxxx 链接")
     ap.add_argument("--pages", default="", help="分P范围，如 1-10,15")
     ap.add_argument("--probe", action="store_true", help="只探测字幕可用性，不抓内容、不转写")
@@ -394,7 +416,11 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=2, help="转写进程数（默认 2）")
     ap.add_argument("--probe-workers", type=int, default=4, help="字幕并发数（默认 4）")
     ap.add_argument("--lang", default="zh", help="字幕优选语言/转写语言，auto 为自动（默认 zh）")
-    ap.add_argument("--srt", action="store_true", help="同时输出 .srt（仅字幕来源有效）")
+    # —— 抽帧相关：抽帧是必经步骤，这里只调参数，不能关 ——
+    ap.add_argument("--frames", type=int, default=6, help="每章候选帧数（默认 6）")
+    ap.add_argument("--quality", type=int, default=64, help="清晰度上限：64=720P 32=480P（默认 64）")
+    ap.add_argument("--cols", type=int, default=5, help="联系表每行格数（默认 5）")
+    ap.add_argument("--skip-existing", action="store_true", help="已有 meta.json 的分P跳过（续跑用）")
     ap.add_argument("--ignore-like-filter", action="store_true", help=f"忽略点赞 < {MIN_LIKE} 跳过规则")
     ap.add_argument("--require-subtitle", action="store_true", help="任一分P无字幕就中止，不进入转写")
     ap.add_argument("--check", action="store_true", help="自检：登录态 / WBI 签名 / 字幕接口连通性")

@@ -14,7 +14,8 @@
 ----
     python -m src.bili_notes BV1hbM9zrEwD --page 2
     python -m src.bili_notes <url> --chapters notes/xxx_chapters.json --frames 8
-    python -m src.bili_notes BV1hbM9zrEwD --page 2 --no-frames      # 只要文本与分章
+
+抽帧是必经步骤：产物一定是「画面 + 文字」的素材包，没有「只出文本」的模式。
 """
 from __future__ import annotations
 
@@ -411,7 +412,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--frames", type=int, default=6, help="每章候选帧数（默认 6）")
     ap.add_argument("--quality", type=int, default=64, help="清晰度上限：64=720P 32=480P（默认 64）")
     ap.add_argument("--cols", type=int, default=5, help="联系表每行格数（默认 5）")
-    ap.add_argument("--no-frames", action="store_true", help="只出文本与分章，不下载视频")
     ap.add_argument("--no-whisper", action="store_true", help="字幕不可用时直接报错，不转写")
     ap.add_argument("--model", default="small", help="转写模型 base/small/medium（默认 small）")
     ap.add_argument("--force", action="store_true", help="忽略字幕缓存")
@@ -593,51 +593,50 @@ def _run(args, page_no: int, out_override: str = "") -> dict:
                              os.path.join(out_dir, "transcript.md"))
     log.info("章节底稿：%s", tpath)
 
-    # 4) 分批抽帧（字幕阶段已完成，这里才开始下视频）
-    if not args.no_frames:
-        # 不按分P加后缀：cid 本身就能唯一定位一条流，加了后缀反而会让缓存失效、重复下载
-        vm = download_video(bvid, cid, max_qn=args.quality)
-        real_dur = probe_duration(vm["path"])
-        log.info("画面源：%s %s，%.1f MB，实际时长 %s", vm["qn_name"],
-                 f"{vm['width']}x{vm['height']}", vm["bytes"] / 1048576, _mmss(real_dur))
+    # 4) 分批抽帧 —— 必经步骤：图文笔记必须有画面，不再提供跳过开关
+    # 不按分P加后缀：cid 本身就能唯一定位一条流，加了后缀反而会让缓存失效、重复下载
+    vm = download_video(bvid, cid, max_qn=args.quality)
+    real_dur = probe_duration(vm["path"])
+    log.info("画面源：%s %s，%.1f MB，实际时长 %s", vm["qn_name"],
+             f"{vm['width']}x{vm['height']}", vm["bytes"] / 1048576, _mmss(real_dur))
 
-        frames_dir = os.path.join(out_dir, "frames")
-        built: dict[str, dict] = {}
-        for i, c in enumerate(chapters, 1):
-            end = min(c["end"], real_dur)
-            if end - c["start"] < 2:
-                continue
-            slots = chapter_slots(c["start"], end, args.frames)
-            raw = grab_frames(vm["path"], slots, os.path.join(frames_dir, f"c{i:02d}"))
-            kept = dedupe_frames(raw)
-            built[f"c{i:02d}"] = {"index": i, "title": c["title"], "start": c["start"],
-                                  "end": end, "candidates": len(raw),
-                                  "frames": [f.as_dict() for f in kept]}
-            log.info("  [%d/%d] %s：%d 候选 -> %d 保留（已落盘）",
-                     i, len(chapters), c["title"][:28], len(raw), len(kept))
-            # 每章都刷一次盘：长视频中断后可以直接续跑
-            with open(os.path.join(out_dir, "frames.json"), "w", encoding="utf-8") as f:
-                json.dump(built, f, ensure_ascii=False, indent=2)
+    frames_dir = os.path.join(out_dir, "frames")
+    built: dict[str, dict] = {}
+    for i, c in enumerate(chapters, 1):
+        end = min(c["end"], real_dur)
+        if end - c["start"] < 2:
+            continue
+        slots = chapter_slots(c["start"], end, args.frames)
+        raw = grab_frames(vm["path"], slots, os.path.join(frames_dir, f"c{i:02d}"))
+        kept = dedupe_frames(raw)
+        built[f"c{i:02d}"] = {"index": i, "title": c["title"], "start": c["start"],
+                              "end": end, "candidates": len(raw),
+                              "frames": [f.as_dict() for f in kept]}
+        log.info("  [%d/%d] %s：%d 候选 -> %d 保留（已落盘）",
+                 i, len(chapters), c["title"][:28], len(raw), len(kept))
+        # 每章都刷一次盘：长视频中断后可以直接续跑
+        with open(os.path.join(out_dir, "frames.json"), "w", encoding="utf-8") as f:
+            json.dump(built, f, ensure_ascii=False, indent=2)
 
-        # 5) 联系表：按章分组，各表格数尽量均衡（避免最后一张只剩一两格）
-        items = []
-        for key in sorted(built):
-            ch = built[key]
-            for n, fr in enumerate(ch["frames"], 1):
-                items.append((f"{key[-2:]}-{n}", ch["title"], fr["ts"], fr["path"]))
-        sheets = []
-        if items:
-            per_max = max(1, args.cols * 4)
-            n_sheets = max(1, math.ceil(len(items) / per_max))
-            per = math.ceil(len(items) / n_sheets)
-            for gi in range(0, len(items), per):
-                sp = contact_sheet(items[gi:gi + per], os.path.join(out_dir, "contacts",
-                                                                    f"sheet_{gi // per + 1}.jpg"),
-                                   cols=args.cols)
-                sheets.append(sp)
-        meta["frames"] = sum(len(v["frames"]) for v in built.values())
-        meta["contacts"] = sheets
-        log.info("联系表：%d 张（%s）", len(sheets), out_dir)
+    # 5) 联系表：按章分组，各表格数尽量均衡（避免最后一张只剩一两格）
+    items = []
+    for key in sorted(built):
+        ch = built[key]
+        for n, fr in enumerate(ch["frames"], 1):
+            items.append((f"{key[-2:]}-{n}", ch["title"], fr["ts"], fr["path"]))
+    sheets = []
+    if items:
+        per_max = max(1, args.cols * 4)
+        n_sheets = max(1, math.ceil(len(items) / per_max))
+        per = math.ceil(len(items) / n_sheets)
+        for gi in range(0, len(items), per):
+            sp = contact_sheet(items[gi:gi + per], os.path.join(out_dir, "contacts",
+                                                                f"sheet_{gi // per + 1}.jpg"),
+                               cols=args.cols)
+            sheets.append(sp)
+    meta["frames"] = sum(len(v["frames"]) for v in built.values())
+    meta["contacts"] = sheets
+    log.info("联系表：%d 张（%s）", len(sheets), out_dir)
 
     with open(os.path.join(out_dir, "meta.json"), "w", encoding="utf-8") as f:
         json.dump({**meta, "chapter_list": chapters}, f, ensure_ascii=False, indent=2)
@@ -645,12 +644,20 @@ def _run(args, page_no: int, out_override: str = "") -> dict:
     print(f"\n完成：{out_dir}")
     print(f"  文本 {tr['source']} {len(tr['segments'])} 段 / {tr['chars']} 字 / {tr['cost']}s"
           f" ｜ 章节 {len(chapters)}")
-    if not args.no_frames:
-        print(f"  候选帧 {meta.get('frames', 0)} 张 ｜ 联系表 {len(meta.get('contacts', []))} 张")
+    print(f"  候选帧 {meta.get('frames', 0)} 张 ｜ 联系表 {len(meta.get('contacts', []))} 张")
     print("  下一步：看 contacts/ 挑帧 -> 写 note.md（只许从 transcript.md 取事实）")
     return {"page": page_no, "part": part, "title": part, "chars": tr["chars"],
             "chapters": len(chapters), "frames": meta.get("frames", 0),
             "cost": tr["cost"], "source": tr["source"]}
+
+
+def build_note(args, page_no: int, out_override: str = "") -> dict:
+    """公开入口：抓取单个分P的图文素材（transcript.md + frames/ + contacts/）。
+
+    供 `extract_bilibili.py` 调度，与 `python -m src.bili_notes` 行为完全一致。
+    抽帧是必经步骤，没有「只出文本」的分支。
+    """
+    return _run(args, page_no, out_override)
 
 
 if __name__ == "__main__":

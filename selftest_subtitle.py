@@ -231,8 +231,8 @@ def t_parse_pages() -> None:
     check("中文逗号兼容", E.parse_pages("1，2") == [1, 2])
     check("空串 → []", E.parse_pages("") == [])
     check("非法输入被忽略", E.parse_pages("a,b-2") == [] or E.parse_pages("a,b-2") == [2])
-    check("文件名单P不带页码", E.out_name("BV1", {"page": 1}, 1) == "BV1.txt")
-    check("文件名多P带页码", E.out_name("BV1", {"page": 3}, 9) == "BV1_P03.txt")
+    check("笔记目录名带分P号", E.note_dir_name("BV1", 1) == "BV1_P01")
+    check("笔记目录名补零到两位", E.note_dir_name("BV1abc", 12) == "BV1abc_P12")
 
 
 def t_live(bvid: str) -> None:

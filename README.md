@@ -1,9 +1,10 @@
-# 🎬 Bilibili Subtitle Extractor — B站视频文本抽取
+# 🎬 Bilibili Subtitle Extractor — B站视频图文素材抽取
 
-> **字幕优先，转写兜底** · 把 B站视频变成可检索的纯文本与图文笔记
+> **画面 + 文字一起抓** · 把 B站视频变成可检索的图文笔记素材
 >
-> 手机扫码登录（一次性会话，用完即焚）→ 直取官方 CC / B站 AI 字幕 → 无字幕才下载音频本地转写。
-> 拿到文本后可按章节自动抽帧，生成带图笔记；多讲合集可机械合并成一份。
+> 手机扫码登录（一次性会话，用完即焚）→ 下载原视频按章节抽帧 → 结合字幕/转写文字 →
+> 产出 `transcript.md` + 关键帧 + 联系表。**没有「只出文本」的模式**：文字与画面必须成对出现。
+> 多讲合集可机械合并成一份完整笔记。
 
 ---
 
@@ -29,24 +30,28 @@
 | 用完即焚 | 任务结束调 logout 注销 + 覆写删除本地文件 |
 | 自动过期 | 默认 30 分钟 TTL，忘了收尾也会失效 |
 
-### 提取：字幕优先，转写兜底
+### 一次跑完：画面 + 文字
 
 ```
-① x/player/v2 按 cid 查字幕轨道        → 官方 CC 字幕，秒级
-② AI 轨道子址为空 → ai/subtitle/search/stat 二次取址 → B站 AI 字幕
-③ 都没有 → 串行下载音频 + faster-whisper 本地转写（离线）
+① 文字：x/player/v2 按 cid 查轨道 → 官方 CC / B站 AI 字幕（秒级）
+        都没有 → 下载音频 + faster-whisper 本地转写（离线）
+② 分章：用字幕做 TextTiling 分段（纯统计，不调模型、不请求任何 LLM）
+③ 画面：下载原视频（首选 1080P，取不到按可用清晰度降级）→ 每章在时间轴内
+        取候选帧（PyAV 定点 seek + 解码单帧，0.04–0.09 秒/帧）
+④ 去重：64 位 dHash，汉明距离 ≤6 判重 → 拼成带时间码的联系表
+⑤ 成文：agent 看联系表挑图，只许从 transcript.md 取事实，写 note.md
 ```
+
+关键点：**②③ 必须都成功**。抽帧失败整P报错，不会退化成「只有文字」的半成品——
+那正是过去被诟病的地方。
 
 旧版读 `view` 接口的 `subtitle.list` 基本恒空，是「明明有字幕却总去转写」的根因。
 
-### 图文笔记：文本 → 章节 → 关键帧
+### 三层字幕校验：防串台
 
-```
-① 用字幕做 TextTiling 分段（纯统计，不调模型）
-② 每章在时间轴内取候选帧，PyAV 定点 seek + 解码单帧（0.04–0.09 秒/帧）
-③ 64 位 dHash 去重（汉明距离 ≤6 判重），拼成带时间码的联系表
-④ 人工/agent 从联系表挑图，写章节化底稿 note.md
-```
+B站 偶尔会把**别的视频**的字幕返回给你（实测过 20 分钟评测视频的字幕套在 1255 秒的分P上）。
+所以字幕要过三道关：覆盖度区间 → 与 AI 总结的词汇亲和度 → 与同合集其他分P的一致性
+（`--audit`，阈值 0.45）。任何一道不过都判为不可用，改走转写。
 
 **不调任何模型 API**：分章用统计、抽帧用本地 PyAV、成文由 agent 读底稿写。零成本、可复现。
 
@@ -101,54 +106,63 @@ python extract_bilibili.py --logout
 
 ## 🎯 用法
 
-### 提取文本
+### 抓取图文素材（唯一默认模式）
+
+**每次都会下载原视频抽帧，不存在「只出文本」的模式。** 文字来自字幕，画面来自视频关键帧，
+两者缺一不出。
 
 ```bash
 # 先探测：哪些分P有字幕（3 秒，不下载任何东西）
 python extract_bilibili.py BV1xxxxxxx --probe --keep-session
 
-# 提取：有字幕抓字幕，无字幕自动转写
+# 默认：下载原视频 → 抽帧 → 取字幕 → 分章 → 素材包
 python extract_bilibili.py BV1xxxxxxx
 
-# 只取字幕，无字幕就跳过
+# 每章多取几帧 / 要 1080P 画面
+python extract_bilibili.py BV1xxxxxxx --frames 8 --quality 80
+
+# 指定分P / 多进程转写 / 复用会话
+python extract_bilibili.py BV1xxxxxxx --pages 1-10,15 --workers 3 --keep-session
+
+# 无字幕就跳过（不转写）
 python extract_bilibili.py BV1xxxxxxx --no-whisper
 
-# 任一分P无字幕就中止（避免误跑几小时转写）
-python extract_bilibili.py BV1xxxxxxx --require-subtitle
-
-# 指定分P / 多进程转写 / 出 SRT / 复用会话
-python extract_bilibili.py BV1xxxxxxx --pages 1-10,15 --workers 3 --srt --keep-session
+# 续跑：已有 meta.json 的分P直接跳过
+python extract_bilibili.py BV1xxxxxxx --skip-existing
 ```
 
-输出：
+产物：
 
 ```
+notes/<BV>_P<NN>/
+├── transcript.md      # 章节化底稿：每章时间范围 + 逐句原话（带时间戳）
+├── frames.json        # 每章候选帧清单（时间戳/路径/尺寸/哈希）
+├── frames/c01..       # 按章分目录的 jpg
+├── contacts/sheet_1.jpg   # 联系表：每格标「章-序号 + 时间码 + 章名」
+└── meta.json          # 来源、耗时、章节、联系表索引
+
 extracted/
-├── BV1xxxxxxx.txt          # 单P正文
-├── BV1xxxxxxx_P01.txt      # 多P正文
-├── BV1xxxxxxx.json         # 元信息 + 每P结果
-└── .subcache/              # 字幕缓存
+├── <BV>.json          # 运行记录：每P的状态/来源/字数/帧数
+└── .subcache/         # 字幕缓存（重跑 0 请求）
 ```
 
-正文首部会写明来源：`官方CC字幕` / `B站AI字幕` / `whisper-small 本地转写`。
+底稿首部会写明文字来源：`官方CC字幕` / `B站AI字幕` / `whisper-small 本地转写`。
 
-### 生成图文笔记
+### 等价入口与审计
 
 ```bash
-# 一键素材包：字幕 → 自动分章 → 分批抽帧 → 底稿 + 联系表
+# 同一个流程的另一种调用方式（参数一一对应）
 python -m src.bili_notes BV1hbM9zrEwD --page 2
 
-# 合集批量（10+ 分P 时末尾会自动跑合集体检）
+# 合集批量（10+ 分P 时末尾自动体检）
 python -m src.bili_notes BV1hbM9zrEwD --pages 1-17 --frames 5 --quality 80 --cols 5
 
 # 只体检：查哪些分P的字幕可能串台
 python -m src.bili_notes BV1hbM9zrEwD --audit
 
-# 只要画面
+# 只要画面，不要文字
 python -m src.bili_frames grab assets/video/xxx.mp4 --times "00:42,06:16,13:53"
 ```
-
-产物在 `notes/<BV>_P<NN>/`：`transcript.md`（章节化底稿）、`frames.json`、`contacts/`（联系表）、`frames/`。
 
 ### 合并成一份 + 出 HTML
 
@@ -164,7 +178,7 @@ python -m src.md_to_html notes/BV1hbM9zrEwD_ALL/note.md notes/BV1hbM9zrEwD_ALL/n
 
 ```
 bilibili-subtitle-extractor/
-├── extract_bilibili.py       # 主脚本：认证→探测→抓字幕→转写→落盘
+├── extract_bilibili.py       # 主脚本：认证→探测→字幕→抽帧→图文素材（唯一默认入口）
 ├── selftest_subtitle.py      # 自检（75 项，纯离线）
 ├── src/
 │   ├── bili_auth.py          # 扫码登录 / 一次性会话 / 注销焚毁
