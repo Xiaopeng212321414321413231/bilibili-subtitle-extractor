@@ -110,9 +110,25 @@ def transcribe_local(bvid: str, cid: int, model_name: str = "small") -> dict:
 
 
 def get_transcript(client, bvid: str, cid: int, duration: int, allow_whisper: bool = True,
-                   model: str = "small", lang: str = "zh", force: bool = False) -> dict:
-    """先取字幕；不可用且允许时才转写。返回值统一成 {source, segments, chars, cost}。"""
+                   model: str = "small", lang: str = "zh", force: bool = False,
+                   force_whisper: bool = False) -> dict:
+    """先取字幕；不可用且允许时才转写。返回值统一成 {source, segments, chars, cost}。
+
+    force_whisper=True 时跳过字幕直接转写。这是给「串台字幕」准备的出口：
+    有些分P的字幕接口能返回内容，但返回的是**别的视频的字幕**（实测同一合集里
+    P15 拿到英雄联盟解说、P27 拿到笔记本维修），这种错法字幕本身是「可用」的，
+    只能靠 --audit 的词汇亲和度发现，然后必须强制重取音频才能纠正。
+    """
     t0 = time.time()
+    if force_whisper:
+        log.info("按 --force-whisper 跳过字幕，直接本地转写…")
+        if not allow_whisper:
+            raise SystemExit("--force-whisper 与 --no-whisper 不能同时使用")
+        t = transcribe_local(bvid, cid, model)
+        t["fallback_reason"] = "force_whisper"
+        log.info("转写完成：%d 段 / %d 字 / %.1fs", len(t["segments"]), t["chars"], t["cost"])
+        return t
+
     r = client.fetch(bvid, cid, prefer_lang=lang, force=force, duration=duration)
     if r.get("available") and r.get("segments"):
         segs = [{"from": float(s["from"]), "to": float(s["to"]), "text": s["text"].strip()}
@@ -415,6 +431,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-whisper", action="store_true", help="字幕不可用时直接报错，不转写")
     ap.add_argument("--model", default="small", help="转写模型 base/small/medium（默认 small）")
     ap.add_argument("--force", action="store_true", help="忽略字幕缓存")
+    ap.add_argument("--force-whisper", action="store_true",
+                    help="跳过字幕直接本地转写（配合 --audit 修复串台字幕）")
     ap.add_argument("--audit", action="store_true",
                     help="合集内一致性体检（对比各分P词汇分布，揪出串台字幕）")
     ap.add_argument("--debug", action="store_true")
@@ -570,7 +588,8 @@ def _run(args, page_no: int, out_override: str = "") -> dict:
 
     # 1) 文本：字幕优先，转写兜底
     tr = get_transcript(client, bvid, cid, duration,
-                        allow_whisper=not args.no_whisper, model=args.model, force=args.force)
+                        allow_whisper=not args.no_whisper, model=args.model,
+                        force=args.force, force_whisper=args.force_whisper)
 
     # 2) 分章
     if args.chapters:

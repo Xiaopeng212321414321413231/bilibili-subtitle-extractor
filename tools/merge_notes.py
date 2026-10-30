@@ -70,8 +70,17 @@ def demote_headings(body, levels=1):
 
 
 def fix_fig_paths(text, part_no):
-    """figs/xxx.jpg -> figs/pNN_xxx.jpg（各篇图重名，必须加前缀）"""
-    return re.sub(r"\]\(figs/([^)]+)\)", lambda m: "](figs/p%02d_%s)" % (part_no, m.group(1)), text)
+    """把各篇图路径改写成 figs/pNN_xxx.jpg（各篇图重名，必须加前缀）。
+
+    兼容两种来源：figs/xxx.jpg（早期手工整理）与 frames/cXX/xxx.jpg
+    （bili_notes 抓帧的产物，按章分子目录，路径里的 / 要压成 _ 才能放平）。
+    """
+    text = re.sub(r"\]\(figs/([^)]+)\)",
+                  lambda m: "](figs/p%02d_%s)" % (part_no, m.group(1).replace("/", "_")),
+                  text)
+    return re.sub(r"\]\(frames/([^)]+)\)",
+                  lambda m: "](figs/p%02d_%s)" % (part_no, m.group(1).replace("/", "_")),
+                  text)
 
 
 def rewrite_preamble(pre, part_no):
@@ -102,13 +111,27 @@ def load_parts(bv, out_figs):
 
         # 复制本篇图片，加 pNN_ 前缀
         n_fig = 0
-        fig_dir = os.path.join(d, "figs")
-        if os.path.isdir(fig_dir):
-            for fn in sorted(os.listdir(fig_dir)):
-                if fn.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
-                    shutil.copy2(os.path.join(fig_dir, fn),
-                                 os.path.join(out_figs, "p%02d_%s" % (no, fn)))
-                    n_fig += 1
+        # 两种图目录都收：figs/（平铺）与 frames/cXX/（抓帧产物，按章分子目录）
+        for base in ("figs", "frames"):
+            root = os.path.join(d, base)
+            if not os.path.isdir(root):
+                continue
+            if base == "figs":
+                for fn in sorted(os.listdir(root)):
+                    if fn.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                        shutil.copy2(os.path.join(root, fn),
+                                     os.path.join(out_figs, "p%02d_%s" % (no, fn)))
+                        n_fig += 1
+            else:
+                # 只认 c01/c02… 这种章目录，跳过 contacts、_discarded 之类
+                for sub in sorted(os.listdir(root)):
+                    if not re.match(r"^c\d+$", sub):
+                        continue
+                    for fn in sorted(os.listdir(os.path.join(root, sub))):
+                        if fn.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                            shutil.copy2(os.path.join(root, sub, fn),
+                                         os.path.join(out_figs, "p%02d_%s_%s" % (no, sub, fn)))
+                            n_fig += 1
         title = ""
         m0 = re.search(r"^#\s+(.+)$", pre, re.M)
         if m0:
