@@ -22,6 +22,7 @@
 import os
 import re
 import glob
+import json
 import shutil
 import argparse
 
@@ -108,8 +109,57 @@ def load_parts(bv, out_figs):
                     shutil.copy2(os.path.join(fig_dir, fn),
                                  os.path.join(out_figs, "p%02d_%s" % (no, fn)))
                     n_fig += 1
-        data[no] = dict(pre=pre, secs=secs, n_fig=n_fig, chars=len(text), path=d)
+        title = ""
+        m0 = re.search(r"^#\s+(.+)$", pre, re.M)
+        if m0:
+            title = m0.group(1).strip()
+        # 原始分P标题（如「第1章-01-Agent的入门指南」）在 meta.json 的 part 里，
+        # 比 note.md 的自拟标题更适合用来分组
+        part = ""
+        mpath = os.path.join(d, "meta.json")
+        if os.path.isfile(mpath):
+            try:
+                with open(mpath, encoding="utf-8") as f:
+                    part = (json.load(f) or {}).get("part", "") or ""
+            except Exception:  # noqa: BLE001
+                part = ""
+        data[no] = dict(pre=pre, secs=secs, n_fig=n_fig, chars=len(text), path=d,
+                        title=title, part=part)
     return data
+
+
+# 分P标题里的「第N章」，如「第1章-01-Agent的入门指南」
+_CHAPTER_PAT = re.compile(r"第\s*(\d+)\s*章\s*[-—－]?\s*(?:\d+\s*[-—－]\s*)?(.*)")
+
+
+def auto_chapters(data: dict) -> list:
+    """按各篇标题里的「第N章」自动分组。
+
+    课程类合集的分P标题天然带章节号（如「第3章-02-RAG知识库构建的基本流程」），
+    按它聚合比分P逐篇平铺可读性好得多。没有章节号的分P会被归到最后一个章。
+    """
+    groups: dict = {}
+    for page in sorted(data):
+        title = data[page].get("part") or data[page].get("title") or ""
+        m = _CHAPTER_PAT.search(title)
+        if m:
+            no, name = int(m.group(1)), m.group(2).strip()
+        else:
+            # 没有章节号的（通常是课程导学/开篇）归到 0，排最前面
+            no, name = 0, title.strip()
+        groups.setdefault(no, []).append((page, name))
+
+    out = []
+    for no in sorted(groups):
+        items = groups[no]
+        name = next((n for _, n in items if n), "")
+        pages = [p for p, _ in items]
+        if no == 0:
+            label = f"开篇  {name}" if name else "开篇"
+        else:
+            label = f"第 {no} 章  {name}" if name else f"第 {no} 章"
+        out.append((label, pages))
+    return out
 
 
 def main():
@@ -120,6 +170,8 @@ def main():
                      help="去掉每篇末尾「附：这 N 张图是怎么来的」（默认保留）")
     api.add_argument("--lead", default=None,
                      help="可选：外部导读目录，ch01.md/ch02.md… 按章注入；不传则零人工内容")
+    api.add_argument("--auto-group", action="store_true",
+                     help="按各篇标题里的「第N章」自动分组（课程类合集用）")
     args = api.parse_args()
 
     out_dir = args.out or os.path.join(ROOT, "notes", args.bv + "_ALL")
@@ -134,8 +186,12 @@ def main():
     if not data:
         raise SystemExit("没找到分篇笔记：notes/%s_PNN/note.md" % args.bv)
 
+    # 分组：默认用手工表；手工表覆盖不全时（或 --auto-group）按「第N章」自动聚合
     chapters = [(name, [p for p in parts if p in data]) for name, parts in DEFAULT_CHAPTERS]
     covered = {p for _, ps in chapters for p in ps}
+    if args.auto_group or len(covered) < len(data) * 0.5:
+        chapters = auto_chapters(data)
+        covered = {p for _, ps in chapters for p in ps}
     left = sorted(set(data) - covered)
     if left:                                  # 分组表没覆盖到的讲次，追加到末尾
         chapters.append(("第 %d 章  其他" % (len(chapters) + 1), left))
