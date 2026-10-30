@@ -247,7 +247,9 @@ def main():
                 if args.drop_appendix and title.startswith("附："):
                     continue
                 ap("### %s\n" % title)
-                ap(fix_fig_paths(demote_headings(body, 1), pno).rstrip() + "\n")
+                # 末尾留空行：不加的话本节最后一段会和下一个 ### 粘成一段，
+                # 既有渲染风险，也会让 verify 的整段比对失败（内容在、但对不上）
+                ap(fix_fig_paths(demote_headings(body, 1), pno).rstrip() + "\n\n")
 
     md = "\n".join(out)
     md = re.sub(r"\n{4,}", "\n\n\n", md)

@@ -21,6 +21,13 @@ import argparse
 
 
 def norm(s):
+    """归一化：去空白，并把图片链接压成占位符。
+
+    合并时图片路径必须从 frames/cXX/xxx.jpg 改写成 figs/pNN_cXX_xxx.jpg
+    （否则相对路径失效、图会断），这是**预期内**的唯一合法改写。
+    所以比对段落时只关心「这里有一张图」，不关心它叫什么。
+    """
+    s = re.sub(r"!\[[^\]]*\]\([^)]*\)", "<IMG>", s)
     return re.sub(r"\s+", "", s)
 
 
