@@ -72,12 +72,69 @@ def _vec(text: str):
     return c, math.sqrt(sum(v * v for v in c.values())) or 1.0
 
 
+def seg_cache_path(audio: str, model_name: str) -> str:
+    """转写结果缓存：跟音频放一起，键是「音频路径 + 模型」。"""
+    return f"{audio}.whisper-{model_name}.json"
+
+
+def load_seg_cache(audio: str, model_name: str):
+    """读转写缓存；坏缓存（空段、字段缺失）当没有，返回 None。"""
+    p = seg_cache_path(audio, model_name)
+    if not os.path.exists(p):
+        return None
+    try:
+        d = json.load(open(p, encoding="utf-8"))
+        segs = d.get("segments") or []
+        if not segs or not all("from" in s and "text" in s for s in segs):
+            raise ValueError("缓存结构不对")
+        return d
+    except Exception as e:  # noqa: BLE001
+        log.warning("转写缓存损坏，忽略：%s（%s）", p, e)
+        return None
+
+
+def save_seg_cache(audio: str, model_name: str, segments: list) -> None:
+    """落盘转写缓存。extract 的并行转写也会写同一份，两边共用、不重复算。"""
+    if not segments:
+        return
+    p = seg_cache_path(audio, model_name)
+    try:
+        tmp = p + ".part"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"model": model_name, "segments": segments,
+                       "chars": sum(len(s["text"]) for s in segments),
+                       "created": time.strftime("%Y-%m-%d %H:%M:%S")},
+                      fh, ensure_ascii=False)
+        os.replace(tmp, p)
+    except Exception as e:  # noqa: BLE001
+        log.debug("转写缓存写入失败: %s", e)
+
+
 def transcribe_local(bvid: str, cid: int, model_name: str = "small") -> dict:
-    """本地 faster-whisper 转写（仅当字幕不可用时调用）。"""
+    """B站分P的本地转写：先从 B站拿音频，再交给 transcribe_audio。"""
     from src.bilibili_client import download_audio
 
-    t0 = time.time()
     audio = download_audio(bvid, cid)
+    return transcribe_audio(audio, model_name)
+
+
+def transcribe_audio(audio: str, model_name: str = "small") -> dict:
+    """对本地音视频文件做 faster-whisper 转写。
+
+    与来源无关：B站下下来的 m4a、用户手里的 mp4、YouTube 下的 webm 都能直接喂
+    （解码交给 faster-whisper，不用先抽音轨）。
+
+    命中磁盘缓存时直接返回，不再解码 —— 同一个文件被反复调用时这一步耗时降到 0。
+    """
+    t0 = time.time()
+    cached = load_seg_cache(audio, model_name)
+    if cached:
+        segs = cached["segments"]
+        log.info("转写缓存命中：%d 段 / %d 字（免解码）", len(segs), cached.get("chars", 0))
+        return {"source": "whisper", "model": model_name, "segments": segs,
+                "chars": cached.get("chars") or sum(len(s["text"]) for s in segs),
+                "cost": round(time.time() - t0, 1), "audio": audio,
+                "language": "zh", "cached": True}
     os.makedirs(MODEL_DIR, exist_ok=True)
     from faster_whisper import WhisperModel
 
@@ -103,10 +160,11 @@ def transcribe_local(bvid: str, cid: int, model_name: str = "small") -> dict:
             s["text"] = to_simplified(s["text"])
     except Exception as e:  # noqa: BLE001
         log.debug("繁简转换不可用: %s", e)
+    save_seg_cache(audio, model_name, out)
     return {"source": "whisper", "model": model_name, "segments": out,
             "chars": sum(len(s["text"]) for s in out),
             "cost": round(time.time() - t0, 1), "audio": audio,
-            "language": getattr(info, "language", "zh")}
+            "language": getattr(info, "language", "zh"), "cached": False}
 
 
 def get_transcript(client, bvid: str, cid: int, duration: int, allow_whisper: bool = True,
