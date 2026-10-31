@@ -1,10 +1,11 @@
-# 🎬 Bilibili Subtitle Extractor — B站视频图文素材抽取
+# 🎬 Bilibili / YouTube Subtitle Extractor — 视频图文素材抽取
 
-> **画面 + 文字一起抓** · 把 B站视频变成可检索的图文笔记素材
+> **画面 + 文字一起抓** · 把 B站 / YouTube 视频变成可检索的图文笔记素材
 >
-> 手机扫码登录（一次性会话，用完即焚）→ 下载原视频按章节抽帧 → 结合字幕/转写文字 →
-> 产出 `transcript.md` + 关键帧 + 联系表。**没有「只出文本」的模式**：文字与画面必须成对出现。
-> 多讲合集可机械合并成一份完整笔记。
+> B站走扫码登录（一次性会话，用完即焚），YouTube 走自研 InnerTube 调用 →
+> 下载原视频按章节抽帧 → 结合字幕/转写文字 → 产出 `transcript.md` + 关键帧 + 联系表。
+> **没有「只出文本」的模式**：文字与画面必须成对出现。
+> 多讲合集**一期一个 HTML** 输出（不再合并），投进知识库按集查阅。
 
 ---
 
@@ -80,7 +81,8 @@ set HF_ENDPOINT=https://hf-mirror.com     # Windows
 export HF_ENDPOINT=https://hf-mirror.com  # macOS / Linux
 ```
 
-不需要 ffmpeg、不需要 yt-dlp —— 抽帧走 PyAV，音频走 B站 DASH 流。
+不需要 ffmpeg，也不依赖 yt-dlp —— 抽帧走 PyAV，B站 音频走 DASH 流，
+YouTube 的直链自己解析（额外只需 `curl_cffi` 1 MB，见 `requirements-youtube.txt`）。
 
 ---
 
@@ -215,7 +217,8 @@ bilibili-subtitle-extractor/
 
 > B站 API（view / playurl / player / WBI 签名）由 `src/bili_subtitle.py` 自己实现，
 > 不依赖 `bilibili-api-python`（那个库是 GPL-3.0）。音频下载走 DASH 音频流、
-> 抽帧走 PyAV，**不需要 yt-dlp 或 ffmpeg**。
+> 抽帧走 PyAV，**不需要 yt-dlp 或 ffmpeg**。YouTube 支持只用 `curl_cffi`（MIT），
+> 没有引入任何 GPL 组件。
 
 ---
 
