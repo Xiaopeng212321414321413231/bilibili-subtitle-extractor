@@ -1,258 +1,243 @@
-# 🎬 Bilibili / YouTube Subtitle Extractor — 视频图文素材抽取
+# 🎬 Bilibili / YouTube Subtitle Extractor
 
-> **画面 + 文字一起抓** · 把 B站 / YouTube 视频变成可检索的图文笔记素材
->
-> B站走扫码登录（一次性会话，用完即焚），YouTube 走自研 InnerTube 调用 →
-> 下载原视频按章节抽帧 → 结合字幕/转写文字 → 产出 `transcript.md` + 关键帧 + 联系表。
-> **没有「只出文本」的模式**：文字与画面必须成对出现。
-> 多讲合集**一期一个 HTML** 输出（不再合并），投进知识库按集查阅。
+> 把一个视频链接变成**图文并茂的单文件 HTML**：按章节抓关键画面 + 字幕/转写文字，排好版，直接能读、能存、能进知识库。
 
----
+给一个链接，出来一份这样的笔记：
 
-## ✨ 它解决什么
-
-- 刷到干货视频想记笔记，却要边看边暂停打字
-- 追连载课程（多P/合集），每期手动提取太累
-- 有的视频有字幕、有的没有，流程总是断
-- 手抄 Cookie 又麻烦又危险，长期凭证一直挂着
-
-现在一条命令解决，且**不留长期凭证**。
+```
+标题 + 一句话总结
+├── 核心结论（6~8 条）
+├── 01 为什么要微调        ← 正文里嵌着关键帧
+├── 02 提示词的天花板
+├── ……
+└── 附：这 N 张图是怎么来的（可溯源时间码）
+```
 
 ---
 
-## 🚀 核心特性
+## 最快用法：一句话，什么都不用装
+
+**它不需要你打开终端。** 把视频链接粘给 AI，说清要什么，就行。
+
+### 第一步：复制链接
+
+在 B站 / YouTube 里点「分享 → 复制链接」，拿到类似这样的一串：
+
+```
+https://www.bilibili.com/video/BV1hbM9zrEwD
+https://www.youtube.com/watch?v=Lt7KrFMcCis
+```
+
+### 第二步：粘给 AI，加上一句要求
+
+**关键是要说「图文并茂」** —— 不说清楚，有些 AI 只会给你一段干巴巴的文字稿。
+
+#### 场景一：只想转一个视频
+
+```
+帮我转写这个视频，生成一份图文并茂的笔记：
+https://www.bilibili.com/video/BV1hbM9zrEwD
+```
+
+#### 场景二：想把整个合集都转了
+
+合集有几十讲时会一讲一个文件，所以要说「整个合集」：
+
+```
+把这个合集转写了，每一讲生成一份图文并茂的笔记：
+https://www.bilibili.com/video/BV12omoB4ExF
+```
+
+#### 场景三：想抓某个 UP 主主页下的所有视频
+
+```
+把这个 UP 主主页下面的视频都转写了，每个都生成图文并茂的笔记：
+https://space.bilibili.com/123456789/video
+```
+
+#### 补充要求（可选，按需加）
+
+| 你想要 | 就在话里加一句 |
+|---|---|
+| 只看某几讲 | 「只要 P3 到 P8」 |
+| 画面要更清楚 | 「要 1080P 的画面」 |
+| 每讲多截几张图 | 「每章多截几张图」 |
+| 不要某讲 | 「P11 跳过」 |
+| 存进知识库 | 「转完传进 IMA 的『蓝桥杯』文件夹」 |
+
+### 第三步：等它跑完
+
+一讲通常几分钟（取决于时长和有没有字幕）。跑完你会拿到一个 `.html` 文件，双击就能在浏览器里看。
+
+---
+
+## 为什么交付物是 HTML
+
+**因为这个格式同时装得下文字和图片，而且是单个文件。**
+
+| | Markdown | HTML（本项目的做法） |
+|---|---|---|
+| 图片 | 存的是相对路径，**一挪位置就全断**，在知识库里打开是一排空白方框 | base64 内嵌在文件里，图文一体，发给谁都不断 |
+| 排版 | 靠阅读器自己解释，各家不一样 | 自带样式，打开就是设计好的样子 |
+| 体积 | 小 | 一讲 0.5~2 MB（主要是图），照样很轻 |
+
+所以它是目前最合适的「AI 生成的文档格式」——**一份文件，图文都在，打开就能读**。
+
+### 刻意不加装饰
+
+**这份 HTML 只用中性灰阶，没有彩色强调、没有图标、没有花哨的卡片。**
+
+两个原因：
+
+1. **彩色会增加 token 和文件体积**。有些工具生成的笔记塞满渐变、彩框、emoji 装饰，图还没几张，样式代码已经几十 KB。
+2. **颜色会替你做判断**。一页里三处标红、五处高亮，等于什么都没强调。真正的重点靠**字号、粗细、留白**就能立住，这些比颜色稳得多。
+
+需要视觉设计时再提要求（「这份做成深色主题」「重点用颜色标出来」），默认就是干净的排版。
+
+---
+
+## 自己跑（可选）
+
+如果你想在本机直接跑，或者要批量处理几十讲：
+
+```bash
+git clone https://github.com/Xiaopeng212321414321413231/bilibili-youtube-subtitle-extractor
+cd bilibili-youtube-subtitle-extractor
+pip install -r requirements.txt
+```
+
+```bash
+# 探测：哪些分P有字幕、多少时长（3 秒，不下载任何东西）
+python -m src.bili_notes BV1hbM9zrEwD --probe
+
+# 跑整个合集：下载 → 抽帧 → 取字幕 → 分章 → 素材包
+python -m src.bili_notes BV1hbM9zrEwD --pages 1-17 --frames 5 --cols 5
+
+# 一讲一个 HTML
+python tools/split_notes.py --bv BV1hbM9zrEwD
+
+# 清中间产物（视频/音频/候选帧，默认只预览）
+python tools/cleanup.py
+```
+
+> B站 需要扫码登录（一次性会话，用完自动注销焚毁）。跑到需要登录时会自动出二维码，手机扫一下就行。
+
+---
+
+## 核心特性
+
+### 画面 + 文字，缺一不出
+
+**没有「只出文本」的模式。** 抽帧是必经步骤——一篇文章没有画面，就退化成一份字幕稿，那跟直接看字幕没区别。
+
+每讲抽多少帧是按章节分配的，抽完再去重（感知哈希），最后人工从联系表里挑 6~10 张真正有信息量的。
+
+### 三层字幕校验：防串台
+
+B站 的字幕接口偶尔会把**别的视频**的字幕返回来（实测 28 讲里 2 讲中招：一讲拿到英雄联盟解说，一讲拿到笔记本维修）。
+
+判断依据不是「有没有字幕」，而是**词汇亲和度**：把字幕和标题/简介做余弦相似度，正常 0.57~0.73，串台会掉到 0.3 左右。检出后 `--force-whisper` 跳过字幕直接本地转写。
+
+### 一期一个 HTML，不合并
+
+**每讲一个独立文件，逐篇投递知识库。** 不做「合成一本大合集」——试过两次，都不对：
+
+- 17 讲合成一份，被理解成「按知识点精简」，只剩 21%，返工两轮
+- 28 讲合成 20 万字单文件，用户看完要求拆开重做
+
+而且合并版必然超知识库的体积上限，要压图，清晰度反而不如单篇。
 
 ### 认证：扫码 + 一次性会话
 
 | 做法 | 说明 |
-|------|------|
-| 手机扫码登录 | 二维码由 B站下发，不经第三方，不要密码 |
+|---|---|
+| 手机扫码登录 | 二维码由 B站下发，不经过第三方，不收密码 |
 | 独立设备会话 | 注销只影响这一份，手机和其它设备照常 |
-| 用完即焚 | 任务结束调 logout 注销 + 覆写删除本地文件 |
-| 自动过期 | 默认 30 分钟 TTL，忘了收尾也会失效 |
+| 用完即焚 | 任务结束自动 logout + 覆写删除本地文件 |
 
-### 一次跑完：画面 + 文字
+### YouTube 支持（自研，不依赖 yt-dlp）
 
-```
-① 文字：x/player/v2 按 cid 查轨道 → 官方 CC / B站 AI 字幕（秒级）
-        都没有 → 下载音频 + faster-whisper 本地转写（离线）
-② 分章：用字幕做 TextTiling 分段（纯统计，不调模型、不请求任何 LLM）
-③ 画面：下载原视频（首选 1080P，取不到按可用清晰度降级）→ 每章在时间轴内
-        取候选帧（PyAV 定点 seek + 解码单帧，0.04–0.09 秒/帧）
-④ 去重：64 位 dHash，汉明距离 ≤6 判重 → 拼成带时间码的联系表
-⑤ 成文：agent 看联系表挑图，只许从 transcript.md 取事实，写 note.md
-```
+自己实现了 InnerTube player API 调用，只额外依赖 `curl_cffi`（1 MB）：
 
-关键点：**②③ 必须都成功**。抽帧失败整P报错，不会退化成「只有文字」的半成品——
-那正是过去被诟病的地方。
+| | |
+|---|---|
+| 元信息 | 2.4s |
+| 字幕 | 1.6s（6.3 万字） |
+| 下载 | 381 MB / 2.5 分钟（8 线程并发，单连接会被限速到 150 KB/s） |
 
-旧版读 `view` 接口的 `subtitle.list` 基本恒空，是「明明有字幕却总去转写」的根因。
-
-### 三层字幕校验：防串台
-
-B站 偶尔会把**别的视频**的字幕返回给你（实测过 20 分钟评测视频的字幕套在 1255 秒的分P上）。
-所以字幕要过三道关：覆盖度区间 → 与 AI 总结的词汇亲和度 → 与同合集其他分P的一致性
-（`--audit`，阈值 0.45）。任何一道不过都判为不可用，改走转写。
-
-**不调任何模型 API**：分章用统计、抽帧用本地 PyAV、成文由 agent 读底稿写。零成本、可复现。
-
-### 多讲合并：只机械拼接
-
-17 篇分篇笔记 → 一份完整笔记，**一个字不改**，只重编标题层级、给图片加讲次前缀。
-`tools/verify_merge.py` 做四维校验（标题/段落/代码块/图），零丢失才放行。
+关键在 `visionos` 这个客户端：不要求 `po_token`，直链也不带 `n` 参数——省掉签名解算和限速反混淆两大块。详见 `src/youtube_client.py` 头部注释。
 
 ---
 
-## 📦 安装
+## 项目结构
+
+```
+src/
+  bili_subtitle.py     B站字幕（纯 requests + WBI 签名，不依赖第三方 SDK）
+  bili_auth.py         扫码登录 + 一次性会话 + 焚毁
+  bili_frames.py       下载视频流、按章节抽帧、感知哈希去重、联系表
+  bili_notes.py        编排：字幕→分章→抽帧→底稿
+  youtube_client.py    YouTube：InnerTube 解析 + 分片并发下载
+  md_to_html.py        笔记 md → 单文件 HTML（图片 base64 内嵌）
+tools/
+  split_notes.py       合集 → 一期一个 HTML
+  notes_from_local.py  本地 mp4 + srt → 同构素材（不碰任何平台 API）
+  cleanup.py           清中间产物（默认 dry-run）
+  safe_delete.py       删除闸门：六道保护挡住误删系统目录
+  ima_put.py           传文件到 IMA 知识库
+```
+
+---
+
+## 依赖
 
 ```bash
-git clone https://github.com/Xiaopeng212321414321413231/bilibili-subtitle-extractor.git
-cd bilibili-subtitle-extractor
-
-pip install -r requirements.txt
+pip install -r requirements.txt              # 核心：处理 B站，无系统包依赖
+pip install -r requirements-youtube.txt      # 可选：只有 YouTube 需要（curl_cffi 1MB）
 ```
 
-需要 **Python 3.10+**（开发与测试用 3.12.10）。
+**不需要 ffmpeg**：抽帧走 PyAV，音频走平台自己的流。**也没有 yt-dlp**。
 
-首次本地转写会自动下载 faster-whisper 模型（约 460 MB），国内建议：
+全部依赖都是 MIT 兼容的宽松许可证（本项目刻意避开 GPL，例如不用 `bilibili-api-python`、不用 `zhconv`）。
+
+---
+
+## 磁盘占用
+
+**这个工具会堆中间产物，跑完记得清。** 实测跑完两个合集（45 讲）累计 **9.4 GB**，其中 7.2 GB 是纯废料：
+
+| 目录 | 大小 | 说明 |
+|---|---|---|
+| `assets/video/` | 3.7 GB | 下载的原视频，笔记写完就没用了 |
+| `audio_b` `audio60` `audio_tmp/` | 3.1 GB | **v1 旧脚本**留下的，纯废料 |
+| 候选帧 | 140 MB | 抽了 1769 张，实际只用了 552 张 |
+| `models/` | 1.6 GB | whisper 模型，**别删**（重下很慢） |
 
 ```bash
-set HF_ENDPOINT=https://hf-mirror.com     # Windows
-export HF_ENDPOINT=https://hf-mirror.com  # macOS / Linux
+python tools/cleanup.py               # 预览：各项能回收多少
+python tools/cleanup.py --all --yes   # 执行（进回收站，可恢复）
 ```
 
-不需要 ffmpeg，也不依赖 yt-dlp —— 抽帧走 PyAV，B站 音频走 DASH 流，
-YouTube 的直链自己解析（额外只需 `curl_cffi` 1 MB，见 `requirements-youtube.txt`）。
+它只删「对应分P的 note.md 已写完」的原视频、临时音频、没被引用的候选帧。成品、转写缓存、模型一律不动。
 
 ---
 
-## 🔑 登录（推荐）
+## 自检
 
 ```bash
-# ① 生成二维码
-python src/bili_auth.py login --no-wait --qr-out "%TEMP%\bili_ephemeral\qr.png"
-#    用手机 B站 App 扫这张图并确认
-
-# ② 等待确认
-python src/bili_auth.py wait --timeout 150
-
-# ③ 用完注销（extract 默认自动执行）
-python extract_bilibili.py --logout
-```
-
-查看状态：`python src/bili_auth.py status`
-
-> 无人值守场景才用 `.env` 里的长期 Cookie（`--login env`）。它是长期凭证，安全性不如扫码。
-
----
-
-## 🎯 用法
-
-### 抓取图文素材（唯一默认模式）
-
-**每次都会下载原视频抽帧，不存在「只出文本」的模式。** 文字来自字幕，画面来自视频关键帧，
-两者缺一不出。
-
-```bash
-# 先探测：哪些分P有字幕（3 秒，不下载任何东西）
-python extract_bilibili.py BV1xxxxxxx --probe --keep-session
-
-# 默认：下载原视频 → 抽帧 → 取字幕 → 分章 → 素材包
-python extract_bilibili.py BV1xxxxxxx
-
-# 每章多取几帧 / 要 1080P 画面
-python extract_bilibili.py BV1xxxxxxx --frames 8 --quality 80
-
-# 指定分P / 多进程转写 / 复用会话
-python extract_bilibili.py BV1xxxxxxx --pages 1-10,15 --workers 3 --keep-session
-
-# 无字幕就跳过（不转写）
-python extract_bilibili.py BV1xxxxxxx --no-whisper
-
-# 续跑：已有 meta.json 的分P直接跳过
-python extract_bilibili.py BV1xxxxxxx --skip-existing
-```
-
-产物：
-
-```
-notes/<BV>_P<NN>/
-├── transcript.md      # 章节化底稿：每章时间范围 + 逐句原话（带时间戳）
-├── frames.json        # 每章候选帧清单（时间戳/路径/尺寸/哈希）
-├── frames/c01..       # 按章分目录的 jpg
-├── contacts/sheet_1.jpg   # 联系表：每格标「章-序号 + 时间码 + 章名」
-└── meta.json          # 来源、耗时、章节、联系表索引
-
-extracted/
-├── <BV>.json          # 运行记录：每P的状态/来源/字数/帧数
-└── .subcache/         # 字幕缓存（重跑 0 请求）
-```
-
-底稿首部会写明文字来源：`官方CC字幕` / `B站AI字幕` / `whisper-small 本地转写`。
-
-### 等价入口与审计
-
-```bash
-# 同一个流程的另一种调用方式（参数一一对应）
-python -m src.bili_notes BV1hbM9zrEwD --page 2
-
-# 合集批量（10+ 分P 时末尾自动体检）
-python -m src.bili_notes BV1hbM9zrEwD --pages 1-17 --frames 5 --quality 80 --cols 5
-
-# 只体检：查哪些分P的字幕可能串台
-python -m src.bili_notes BV1hbM9zrEwD --audit
-
-# 只要画面，不要文字
-python -m src.bili_frames grab assets/video/xxx.mp4 --times "00:42,06:16,13:53"
-```
-
-### 合并成一份 + 出 HTML
-
-```bash
-python tools/merge_notes.py --bv BV1hbM9zrEwD          # 机械合并，零改写
-python tools/verify_merge.py --bv BV1hbM9zrEwD         # 四维校验，退出码 0 才算过
-python -m src.md_to_html notes/BV1hbM9zrEwD_ALL/note.md notes/BV1hbM9zrEwD_ALL/note.html
+python selftest_subtitle.py            # 75 项离线测试（签名/优先级/合段/缓存/会话/焚毁）
+python tools/cleanup.py                # 磁盘占用体检（只看不删）
 ```
 
 ---
 
-## 🧩 项目结构
+## 许可证
 
-```
-bilibili-subtitle-extractor/
-├── extract_bilibili.py       # 主脚本：认证→探测→字幕→抽帧→图文素材（唯一默认入口）
-├── selftest_subtitle.py      # 自检（75 项，纯离线）
-├── src/
-│   ├── bili_auth.py          # 扫码登录 / 一次性会话 / 注销焚毁
-│   ├── bili_subtitle.py      # 字幕直取 / WBI 签名 / 三层校验 / 缓存
-│   ├── bilibili_client.py    # 元信息 / 音频下载
-│   ├── bili_notes.py         # 图文笔记管线：分章 → 抽帧 → 底稿
-│   ├── bili_frames.py        # DASH 视频轨下载 / PyAV 抽帧 / dHash 去重
-│   ├── md_to_html.py         # md → 单文件 HTML（图片 base64 内嵌）
-│   ├── zh_convert.py         # 繁→简转换
-│   └── download_model.py     # 模型预下载
-├── tools/
-│   ├── merge_notes.py        # 多篇笔记 → 一份（机械合并）
-│   └── verify_merge.py       # 合并保真校验
-├── requirements.txt
-└── .env.example
-```
+MIT。见 [LICENSE](LICENSE)。
 
-运行时会生成 `extracted/`、`notes/`、`assets/`、`models/`，这些已在 `.gitignore` 中忽略。
+## 免责与使用边界
 
----
-
-## 📋 依赖
-
-| 依赖 | 用途 | 许可证 |
-|------|------|--------|
-| requests | HTTP（B站 API 全部自实现） | Apache-2.0 |
-| python-dotenv | `.env` 读取 | BSD-3 |
-| faster-whisper | 本地语音转写 | MIT |
-| av (PyAV) | 视频轨解码 / 定点抽帧 | BSD-3 |
-| qrcode + Pillow | 登录二维码渲染 | BSD / MIT-CMU |
-| opencc-python-reimplemented | 繁→简（whisper 中文默认吐繁体） | Apache-2.0 |
-
-**全部依赖都是 MIT 兼容的宽松许可证**，因此本项目可以放心用 MIT 分发。
-
-> B站 API（view / playurl / player / WBI 签名）由 `src/bili_subtitle.py` 自己实现，
-> 不依赖 `bilibili-api-python`（那个库是 GPL-3.0）。音频下载走 DASH 音频流、
-> 抽帧走 PyAV，**不需要 yt-dlp 或 ffmpeg**。YouTube 支持只用 `curl_cffi`（MIT），
-> 没有引入任何 GPL 组件。
-
----
-
-## 🧪 自检
-
-```bash
-python selftest_subtitle.py               # 75 项离线逻辑（签名/轨道/合段/缓存/会话/焚毁/繁简）
-python selftest_subtitle.py --audio a.m4a # 实测转写链路（不联网）
-python selftest_subtitle.py --live BV1xx  # 额外做一次真实探测
-```
-
-全部离线，约 5 秒。CI 每次 push 都会跑。
-
----
-
-## 📄 许可证
-
-[MIT](LICENSE) © 2026 Xiaopeng212321414321413231
-
-本项目刻意**不引入任何 GPL 依赖**，因此可以自由用于商业/闭源项目：
-
-- B站 API 由 `src/bili_subtitle.py` 自行实现（含 WBI 签名），不用 GPL 的 `bilibili-api-python`
-- 繁简转换用 Apache-2.0 的 `opencc-python-reimplemented`，不用 GPL 的 `zhconv`；
-  代码里另内置了 392 字对照表，没装 opencc 也能跑
-
-如果你在自己项目里引用本项目，保留 LICENSE 文件即可。
-
----
-
-## ⚠️ 免责与使用边界
-
-- 仅供**个人学习与研究**使用，请遵守 [B站用户协议](https://www.bilibili.com/protocal/licence.shtml) 与 `robots.txt`
-- 请控制请求频率，不要用于批量抓取、镜像站点或再分发他人作品
-- 提取出的字幕与截图版权归原 UP 主所有，**不要公开传播**
-- 本项目不含任何解密、绕过付费/会员限制的功能；仅读取登录状态下自身可访问的内容
-
-使用本项目产生的任何后果由使用者自行承担。
+- 仅供**个人学习与研究**：把公开视频转成文字和图，便于检索和复习。
+- **不要再分发**转写内容或截图。视频版权归原作者，笔记自己看没问题，公开发布请先获得授权。
+- 请遵守平台服务条款。本项目不绕过付费墙、不破解加密内容，只读取公开可访问的字幕与画面。
+- 字幕/转写均为**机器生成**，可能有错。写进笔记的事实请以视频为准。

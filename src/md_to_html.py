@@ -12,7 +12,10 @@ import re
 import sys
 
 _CSS = """
-:root { --ink:#1f2328; --sub:#5b6472; --line:#e6e8ec; --bg:#fbfbfc; --accent:#2f6f5e; }
+/* 刻意只用中性灰阶：笔记是拿来读的，不是拿来炫的。
+   彩色强调会增加视觉噪音，也会让「哪些是重点」这个判断被颜色替代掉。
+   需要强调就用字号、粗细、留白——这些比颜色更稳。 */
+:root { --ink:#1f2328; --sub:#5b6472; --line:#e6e8ec; --bg:#fbfbfc; }
 * { box-sizing: border-box; }
 body {
   margin:0; background:#f4f5f7; color:var(--ink);
@@ -26,8 +29,8 @@ h1 { font-size: 30px; line-height:1.35; letter-spacing:-.01em; margin: 0 0 18px;
 h2 { font-size: 21px; margin: 46px 0 14px; padding-top: 22px; border-top:1px solid var(--line); }
 h3 { font-size: 17px; margin: 28px 0 10px; }
 p { margin: 12px 0; }
-blockquote { margin: 18px 0; padding: 14px 18px; background:#f6f8f7;
-             border-left: 3px solid var(--accent); color:#28322f; border-radius: 2px; }
+blockquote { margin: 18px 0; padding: 14px 18px; background:#fafbfc;
+             border-left: 3px solid var(--line); color:#28322f; border-radius: 2px; }
 blockquote p { margin: 4px 0; }
 ul, ol { margin: 12px 0; padding-left: 22px; }
 li { margin: 6px 0; }
