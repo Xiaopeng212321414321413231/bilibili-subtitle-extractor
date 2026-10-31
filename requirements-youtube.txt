@@ -1,0 +1,18 @@
+# 可选依赖：只处理 YouTube 时才需要。
+#
+#     pip install -r requirements-youtube.txt
+#
+# 不装它，B站 的所有功能照常工作 —— src/youtube_client.py 在 import 失败时
+# 会抛出带明确指引的 YouTubeUnreachable，不会让整个项目起不来。
+#
+# 这两个包为什么必须成对出现：
+#   yt-dlp    负责「解析」——签名解算、n 参数反混淆、po_token、多 client 轮换。
+#             自己实现不现实，它跟 YouTube 斗了十几年。
+#   curl_cffi 负责「过关」——TLS 指纹模拟。缺了它，yt-dlp 只能发裸请求，
+#             YouTube 一眼认出不是浏览器，直接掐断 TLS 握手：
+#             SSL: UNEXPECTED_EOF_WHILE_READING（实测连试 10 次全败）。
+#
+# 许可证：yt-dlp 是 Unlicense（公有领域），curl_cffi 是 MIT，都不污染本项目的 MIT。
+
+yt-dlp>=2025.1
+curl_cffi>=0.7
