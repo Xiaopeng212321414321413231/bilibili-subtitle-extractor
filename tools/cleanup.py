@@ -42,19 +42,29 @@ def _mb(n: int) -> float:
     return n / 1048576
 
 
-def done_pages() -> dict:
-    """分P cid -> 该分P的 note.md 是否已写完。"""
-    out = {}
-    for mp in glob.glob(os.path.join(ROOT, "notes", "*_P*", "meta.json")):
+def done_pages() -> tuple[dict, set]:
+    """返回 (cid -> note.md 是否已写完, 已完成的本地视频绝对路径集合)。
+
+    第二个返回值是给 YouTube / 本地文件模式用的：那种笔记没有 cid，
+    只能靠 meta.json 里的 local_video 字段反查。
+    """
+    by_cid: dict = {}
+    local_done: set = set()
+    for mp in glob.glob(os.path.join(ROOT, "notes", "*_P*", "meta.json")) + \
+            glob.glob(os.path.join(ROOT, "notes", "*", "meta.json")):
         d = os.path.dirname(mp)
         try:
             m = json.load(open(mp, encoding="utf-8"))
         except Exception:  # noqa: BLE001
             continue
+        has_note = os.path.isfile(os.path.join(d, "note.md"))
         cid = str(m.get("cid") or "")
-        if cid:
-            out[cid] = os.path.isfile(os.path.join(d, "note.md"))
-    return out
+        if cid and cid != "0":
+            by_cid[cid] = has_note
+        lv = m.get("local_video") or ""
+        if lv and has_note:
+            local_done.add(os.path.normpath(lv))
+    return by_cid, local_done
 
 
 def scan_video() -> tuple[list[str], list[str]]:
@@ -62,7 +72,7 @@ def scan_video() -> tuple[list[str], list[str]]:
     d = os.path.join(ROOT, "assets", "video")
     if not os.path.isdir(d):
         return [], []
-    done = done_pages()
+    by_cid, local_done = done_pages()
     safe, keep = [], []
     for f in sorted(os.listdir(d)):
         if os.path.splitext(f)[1].lower() not in (".mp4", ".mkv", ".webm", ".flv", ".m4a"):
@@ -70,12 +80,17 @@ def scan_video() -> tuple[list[str], list[str]]:
         fp = os.path.join(d, f)
         if not os.path.isfile(fp):
             continue
+        # ① 本地文件模式（YouTube）：meta.json 的 local_video 指向它，且笔记已写完
+        if os.path.normpath(fp) in local_done:
+            safe.append(fp)
+            continue
+        # ② B站分P：用文件名尾部的 cid 匹配
         stem = os.path.splitext(f)[0]
         cid = stem.split("_")[-1] if "_" in stem else ""
-        if cid and done.get(cid) is True:
+        if cid and by_cid.get(cid) is True:
             safe.append(fp)
         else:
-            why = "笔记未写完" if cid in done else "无对应笔记"
+            why = "笔记未写完" if cid in by_cid else "无对应笔记"
             keep.append((fp, why))
     return safe, keep
 
@@ -114,28 +129,32 @@ def scan_frames() -> tuple[list[str], list[str]]:
 
 
 def to_recycle(paths: list[str]) -> int:
-    """移进 Windows 回收站（可恢复）。失败则跳过并报数。"""
+    """移进系统回收站（可恢复）。
+
+    用 send2trash 而不是 PowerShell：从 shell 调 powershell 会被安全策略拦
+    （实测 returncode 1、stderr 为空，1432 个文件只成功 40 个），
+    而 send2trash 直接调 Windows Shell API，不经过任何命令行。
+    """
     if not paths:
         return 0
-    # 用 VisualBasic 的 DeleteFile + SendToRecycleBin，比 rm 安全
-    union = ("$ErrorActionPreference='Continue';"
-             "Add-Type -AssemblyName Microsoft.VisualBasic;")
+    try:
+        from send2trash import send2trash
+    except ImportError:
+        print("  ! 缺少 send2trash，无法安全删除。装：pip install send2trash")
+        return 0
+
     ok = 0
-    # 分批，避免命令行过长
-    for i in range(0, len(paths), 40):
-        batch = paths[i:i + 40]
-        cmds = union + "".join(
-            "try{[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('%s','OnlyErrorDialogs','SendToRecycleBin')}catch{};"
-            % p.replace("'", "''") for p in batch)
+    fail = 0
+    for p in paths:
         try:
-            r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmds],
-                               capture_output=True, timeout=180)
-            if r.returncode == 0:
-                ok += len(batch)
-            else:
-                print("  ! 批量删除返回 %d：%s" % (r.returncode, r.stderr.decode("utf-8", "ignore")[:120]))
+            send2trash(p)
+            ok += 1
         except Exception as e:  # noqa: BLE001
-            print("  ! 删除异常：%s" % str(e)[:120])
+            fail += 1
+            if fail <= 3:
+                print("  ! %s：%s" % (os.path.basename(p)[:40], str(e)[:100]))
+    if fail > 3:
+        print("  ! …… 另有 %d 个失败" % (fail - 3))
     return ok
 
 
