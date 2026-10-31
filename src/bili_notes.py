@@ -26,8 +26,10 @@ import math
 import os
 import re
 import sys
+import tempfile
 import time
 from collections import Counter
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -167,6 +169,63 @@ def transcribe_audio(audio: str, model_name: str = "small") -> dict:
             "language": getattr(info, "language", "zh"), "cached": False}
 
 
+# 整个批量会话最多重新扫码一次 —— 28 讲的合集不能每讲都卡 180 秒等扫码。
+_RELOGIN_DONE = False
+
+
+def _second_qr_retry(client, bvid: str, cid: int, lang: str, force: bool,
+                     duration: int) -> tuple[Optional[dict], str]:
+    """AI 字幕失败后的「第二次二维码」机会：等一会 → 重新扫码登录 → 重试一次。
+
+    AI 字幕接口需要登录态（SESSDATA），批量跑一半失败最常见的根因就是会话
+    过期或被限流。第一次失败时先等几秒，让用户重新扫码（终端直接画二维码，
+    不用去找 PNG），登录成功后刷新凭证重试一次。
+
+    Returns:
+        (字幕结果 dict, "")   重试成功
+        (None, 跳过原因)      不重试或重试仍失败，调用方继续走本地转写
+    """
+    global _RELOGIN_DONE
+    if _RELOGIN_DONE:
+        return None, "本次会话已重新扫码过一次，不再重复"
+    if not sys.stdin.isatty():
+        return None, "非交互环境（无人扫码），跳过重新登录"
+    _RELOGIN_DONE = True
+
+    try:
+        from src.bili_auth import load_session, qr_login
+    except ImportError:  # 以脚本方式运行时无父包
+        from bili_auth import load_session, qr_login
+
+    def _on_qr(url: str, png: str, _key: str) -> None:
+        # 终端直接画二维码：当场就能扫，不用去找 PNG 文件
+        try:
+            import qrcode
+            qr = qrcode.QRCode(border=1)
+            qr.add_data(url)
+            qr.print_ascii(invert=True)
+        except Exception as e:  # noqa: BLE001
+            log.debug("终端渲染二维码失败: %s", e)
+        log.info("二维码 PNG 备份：%s", png or "(未落盘)")
+
+    log.info("等待 5 秒后生成第二次登录二维码（AI 字幕需要登录态）… 请用手机 B站 App 扫码")
+    time.sleep(5)
+    res = qr_login(qr_out=os.path.join(tempfile.gettempdir(), "bili_qr_retry.png"),
+                   timeout=180, on_qr=_on_qr)
+    if not res.get("ok"):
+        log.warning("第二次扫码未成功：%s", (res.get("error") or "")[:100])
+        return None, "第二次扫码失败"
+
+    sess = load_session()
+    if sess:
+        client.apply_credentials(sess)
+    log.info("重新登录成功，重试 AI 字幕…")
+    r = client.fetch(bvid, cid, prefer_lang=lang, force=force, duration=duration)
+    if r.get("available") and r.get("segments"):
+        return r, ""
+    return None, "重新登录后字幕仍不可用（%s）" % (r.get("reason") or "unknown")
+
+
 def get_transcript(client, bvid: str, cid: int, duration: int, allow_whisper: bool = True,
                    model: str = "small", lang: str = "zh", force: bool = False,
                    force_whisper: bool = False) -> dict:
@@ -200,6 +259,24 @@ def get_transcript(client, bvid: str, cid: int, duration: int, allow_whisper: bo
 
     reason = r.get("reason", "unknown")
     log.warning("字幕不可用（%s：%s）", reason, (r.get("message") or "")[:100])
+
+    # AI 字幕相关失败（无轨道 / 二次取址拿不到 URL）：先给一次「第二次二维码」的机会。
+    # AI 字幕接口需要登录态，最常见的失败根因是会话过期或被限流——等一会、重新扫码、
+    # 重试一次；仍不行，或其他原因（覆盖度/内容校验不过），直接走本地转写。
+    if reason in ("no_track", "fetch_failed"):
+        r2, why_skip = _second_qr_retry(client, bvid, cid, lang, force, duration)
+        if r2 and r2.get("segments"):
+            segs = [{"from": float(s["from"]), "to": float(s["to"]), "text": s["text"].strip()}
+                    for s in r2["segments"] if s.get("text", "").strip()]
+            log.info("重新扫码后字幕命中：%d 段 / %d 字 / %.1fs（kind=%s）",
+                     len(segs), sum(len(s["text"]) for s in segs),
+                     time.time() - t0, r2.get("kind"))
+            return {"source": "subtitle", "kind": r2.get("kind"), "segments": segs,
+                    "chars": sum(len(s["text"]) for s in segs),
+                    "cost": round(time.time() - t0, 1), "relogin": True}
+        if why_skip:
+            log.info("跳过第二次扫码：%s", why_skip)
+
     if not allow_whisper:
         raise SystemExit(f"字幕不可用且已禁用转写：{reason}")
     log.info("转入本地转写兜底（模型 %s，长视频可能需要数分钟）…", model)

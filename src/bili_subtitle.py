@@ -508,17 +508,22 @@ class BiliSubtitleClient:
         if url:
             return url
         lan = str(track.get("lan", ""))
-        if lan.startswith("ai-") and aid and cid:
-            # 新版 AI 字幕：player 里 url 为空，需二次请求（先不带签名，与网页一致）
-            for signed in (False, True):
-                try:
-                    d = self._request(API_AI_STAT, {"aid": aid, "cid": cid}, signed=signed)
-                    url = _norm_url(((d.get("data") or {}).get("subtitle_url")) or "")
-                    if url:
-                        log.debug("AI 字幕 URL 经 search/stat 取得: cid=%s", cid)
-                        return url
-                except Exception as e:  # noqa: BLE001
-                    log.debug("ai/subtitle/search/stat(%s) 失败: %s", "signed" if signed else "plain", e)
+        if not (lan.startswith("ai-") and aid and cid):
+            return ""
+        # 新版 AI 字幕：player 里 url 为空，需二次请求。这个接口偶发限流/未就绪，
+        # 一次失败不代表没有 —— 批量跑 28 讲实测约四成拿不到，失败分布是
+        # 「每 2~3 讲挂一个」的限流节奏，退避重试能救回大半。
+        for attempt, signed in enumerate((False, True, False)):
+            try:
+                d = self._request(API_AI_STAT, {"aid": aid, "cid": cid}, signed=signed)
+                url = _norm_url(((d.get("data") or {}).get("subtitle_url")) or "")
+                if url:
+                    log.debug("AI 字幕 URL 经 search/stat 取得: cid=%s 第%d次", cid, attempt + 1)
+                    return url
+            except Exception as e:  # noqa: BLE001
+                log.debug("ai/subtitle/search/stat(%s) 失败: %s", "signed" if signed else "plain", e)
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
         return ""
 
     @staticmethod
