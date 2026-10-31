@@ -397,7 +397,7 @@ def _extract_cookies(s: requests.Session, resp=None) -> dict:
     }
 
 
-def qr_login(
+def _qr_login_once(
     qr_out: str = "",
     timeout: int = 180,
     ttl: int = DEFAULT_TTL,
@@ -405,7 +405,7 @@ def qr_login(
     on_qr=None,
     save: bool = True,
 ) -> dict:
-    """完整扫码登录流程。
+    """单轮扫码登录：生成一枚二维码并等待确认。
 
     Args:
         qr_out: 二维码 PNG 输出路径，空则不落图。
@@ -480,6 +480,40 @@ def qr_login(
         time.sleep(interval)
 
     return {"ok": False, "error": f"等待扫码超时（{timeout}s）"}
+
+
+def qr_login(
+    qr_out: str = "",
+    timeout: int = 180,
+    ttl: int = DEFAULT_TTL,
+    interval: float = 1.5,
+    on_qr=None,
+    save: bool = True,
+    rounds: int = 2,
+) -> dict:
+    """完整扫码登录流程：默认自动给两轮。
+
+    第一轮二维码超时或失效后，**自动重新生成一枚新二维码再等一轮**——
+    扫码超时太常见了（手机不在手边、网慢加载不出确认页），不该让整个
+    任务直接失败。两轮都没扫上才算失败。
+
+    Args:
+        rounds: 二维码总轮数（默认 2）。
+        其余参数同 `_qr_login_once`。
+
+    Returns:
+        {"ok": True, "creds": {...}, "expires": ...} 或 {"ok": False, "error": ...}
+    """
+    last: dict = {"ok": False, "error": "未开始"}
+    for rnd in range(1, max(1, rounds) + 1):
+        if rnd > 1:
+            print(f"  [auth] 第 {rnd}/{rounds} 轮：重新生成二维码，请再扫一次", flush=True)
+        res = _qr_login_once(qr_out=qr_out, timeout=timeout, ttl=ttl,
+                             interval=interval, on_qr=on_qr, save=save)
+        if res.get("ok"):
+            return res
+        last = res
+    return last
 
 
 def wait_pending(timeout: int = 120, ttl: int = DEFAULT_TTL, interval: float = 1.5) -> dict:

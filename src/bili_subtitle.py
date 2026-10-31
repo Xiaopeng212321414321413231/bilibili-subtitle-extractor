@@ -791,9 +791,13 @@ class BiliSubtitleClient:
         errors: list[str] = []
         for attempt in range(self.MAX_TRACK_ATTEMPTS):
             if attempt:
-                # B站 偶发下发「别的视频」的字幕对象，重查一次轨道通常就能拿到正确的
-                log.info("字幕全部不可用，重查轨道后再试一次（B站 偶发下发错误字幕对象）")
-                time.sleep(1.2)
+                # B站 偶发下发「别的视频」的字幕对象，重查一次轨道通常就能拿到正确的。
+                # 重试间隔按用户指定的节奏递增：第一次重试前等 1.5s，第二次前等 3s；
+                # 两轮重试仍失败才交回调用方走本地转写。
+                wait = 1.5 if attempt == 1 else 3.0
+                log.info("字幕提取失败，等 %ss 后重查轨道再试（第 %d/%d 次）…",
+                         wait, attempt, self.MAX_TRACK_ATTEMPTS - 1)
+                time.sleep(wait)
                 try:
                     again = self.list_tracks(aid, cid, bvid, raise_on_error=True)
                 except Exception as e:  # noqa: BLE001
