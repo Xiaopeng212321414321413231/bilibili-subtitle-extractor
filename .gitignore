@@ -54,3 +54,4 @@ Thumbs.db
 
 # —— 历史遗留脚本（v1 分步脚本，功能已被 extract_bilibili.py 覆盖）——
 legacy/
+logs/
