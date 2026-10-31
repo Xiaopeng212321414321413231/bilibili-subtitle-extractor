@@ -19,3 +19,5 @@ qrcode>=7.4,<9
 Pillow>=10.0,<13
 av>=12.0,<14
 opencc-python-reimplemented>=0.1.7,<0.2
+# 安全删除走回收站（tools/cleanup.py、safe_delete.py 用）。纯 Python，无编译。
+send2trash>=1.8,<2
