@@ -56,19 +56,30 @@ log = logging.getLogger("extract")
 
 MIN_LIKE = 5  # 用户规则：点赞 < 5 直接跳过
 
+# 转写 worker 的进程级全局（spawn 后由 _w_init 赋值）
+_MODEL = None
+_W_MODEL_NAME = "small"
+
 
 # --------------------------------------------------------------------------- #
 # whisper 降级（进程级并行，模型在子进程内各加载一次）
 # --------------------------------------------------------------------------- #
 def _w_init(model_name: str, model_dir: str) -> None:
-    global _MODEL
+    global _MODEL, _W_MODEL_NAME
     from faster_whisper import WhisperModel
 
+    _W_MODEL_NAME = model_name
     _MODEL = WhisperModel(model_name, device="cpu", compute_type="int8", download_root=model_dir)
 
 
 def _w_run(job: tuple) -> tuple:
-    """job = (key, audio_path, language) → (key, text, error)"""
+    """job = (key, audio_path, language) → (key, text, error)
+
+    除了返回纯文本，还把**带时间戳的段**写进转写缓存（`<音频>.whisper-<模型>.json`）。
+    这样后续 build_note 走 transcribe_local 时能直接命中缓存：既不必再解码一遍音频，
+    也保证图文底稿用的是和批量转写完全一致的文本（此前两边各转一次，底稿还会被
+    字幕重新盖掉，串台问题根治不了）。
+    """
     key, audio_path, language = job
     try:
         lang = None if language in ("", "auto") else language
@@ -80,13 +91,29 @@ def _w_run(job: tuple) -> tuple:
         if lang in (None, "zh"):
             # whisper 对中文默认吐繁体，用提示词把输出压成简体并带标点
             kwargs["initial_prompt"] = "以下是普通话内容，请用简体中文转写并加上标点符号。"
-        segs, _info = _MODEL.transcribe(audio_path, language=lang, **kwargs)  # type: ignore[name-defined]
-        text = "".join(s.text for s in segs).strip()
+        raw, _info = _MODEL.transcribe(audio_path, language=lang, **kwargs)  # type: ignore[name-defined]
+        segs = [{"from": round(float(s.start), 2), "to": round(float(s.end), 2),
+                 "text": (s.text or "").strip()} for s in raw]
+        segs = [s for s in segs if s["text"]]
         if lang in (None, "zh"):
             from zh_convert import to_simplified  # whisper 中文常吐繁体
 
-            text = to_simplified(text)
-        return key, text, ""
+            for s in segs:
+                s["text"] = to_simplified(s["text"])
+        if segs:
+            try:
+                cache = "%s.whisper-%s.json" % (audio_path, _W_MODEL_NAME)  # type: ignore[name-defined]
+                tmp = cache + ".part"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump({"model": _W_MODEL_NAME,  # type: ignore[name-defined]
+                               "segments": segs,
+                               "chars": sum(len(s["text"]) for s in segs),
+                               "created": time.strftime("%Y-%m-%d %H:%M:%S")},
+                              fh, ensure_ascii=False)
+                os.replace(tmp, cache)
+            except Exception as e:  # noqa: BLE001
+                log.debug("转写缓存写入失败: %s", e)
+        return key, "".join(s["text"] for s in segs).strip(), ""
     except Exception as e:  # noqa: BLE001
         return key, "", str(e)[:200]
 
@@ -359,6 +386,10 @@ def process(bvid: str, client: BiliSubtitleClient, args, login_ok: bool = True) 
             summary["pages"].append({**r, "status": "failed", "error": r.get("sub_error") or r.get("transcribe_error")})
             continue
 
+        # 这一 P 的文本若来自转写，必须让 build_note 也跳过字幕：
+        # build_note 里还会自己 fetch 一次字幕，不传这个开关的话，串台字幕会把
+        # 刚转好的正确文本重新盖掉（转写结果有缓存，重复调用不会二次解码）。
+        from_whisper = str(item.get("source", "")).startswith("whisper")
         ns = SimpleNamespace(
             target=bvid,
             page=str(r["page"]),
@@ -371,6 +402,7 @@ def process(bvid: str, client: BiliSubtitleClient, args, login_ok: bool = True) 
             quality=args.quality,
             frames=args.frames,
             cols=args.cols,
+            force_whisper=from_whisper,
         )
         try:
             res = build_note_assets(ns, r["page"])
