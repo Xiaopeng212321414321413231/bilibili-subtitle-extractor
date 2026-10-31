@@ -95,13 +95,41 @@ def scan_video() -> tuple[list[str], list[str]]:
     return safe, keep
 
 
+# 所有可能堆音频的地方：项目内的 legacy 目录 + 临时目录
+AUDIO_DIRS = ["audio_b", "audio60", "audio_tmp", "audio"]
+AUDIO_EXT = (".m4a", ".mp3", ".webm", ".wav", ".flac", ".aac", ".ogg")
+
+
 def scan_audio() -> list[str]:
-    """临时目录里 whisper 用的音频。转写结果已缓存，音频本身可删。"""
-    d = os.path.join(tempfile.gettempdir(), "bilibili_audio")
-    if not os.path.isdir(d):
-        return []
-    return [os.path.join(d, f) for f in os.listdir(d)
-            if os.path.isfile(os.path.join(d, f)) and f.lower().endswith((".m4a", ".mp3", ".webm", ".wav"))]
+    """所有音频/下载碎片，但**保留 .whisper-*.json 转写缓存**。
+
+    缓存就在音频旁边，整个目录端走的话，没写完的笔记要重新转一遍（几十分钟）。
+    临时目录 bilibili_audio 里除 json 之外一律算可删 —— 那里还有历史遗留的
+    .mp4 和 .part 碎片（早期版本把音频存成 .mp4 了），只按音频扩展名过滤会漏。
+    """
+    out = []
+    dirs = [os.path.join(ROOT, d) for d in AUDIO_DIRS]
+    tmpdir = os.path.join(tempfile.gettempdir(), "bilibili_audio")
+    dirs.append(tmpdir)
+
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for r, _, fs in os.walk(d):
+            for f in fs:
+                fp = os.path.join(r, f)
+                low = f.lower()
+                if low.endswith(".json"):        # 转写缓存，必须留
+                    continue
+                if low.endswith(AUDIO_EXT) or low.endswith((".part", ".mp4", ".mkv")):
+                    out.append(fp)
+    return out
+
+
+def scan_tmpview() -> list[str]:
+    """`notes/*/_tmpview/` —— 选帧时临时截的放大图，选完就没用了。"""
+    return [p for p in glob.glob(os.path.join(ROOT, "notes", "*", "_tmpview"))
+            if os.path.isdir(p)]
 
 
 def scan_frames() -> tuple[list[str], list[str]]:
@@ -150,6 +178,12 @@ def to_recycle(paths: list[str]) -> int:
             send2trash(p)
             ok += 1
         except Exception as e:  # noqa: BLE001
+            # send2trash 偶尔报"找不到文件"但其实已经删掉了（批量删除时的状态不同步）。
+            # 以「文件是否真的不在」为准，不看返回值 —— 否则会误报失败，
+            # 让人以为没删、实际删了，比删不掉更危险。
+            if not os.path.exists(p):
+                ok += 1
+                continue
             fail += 1
             if fail <= 3:
                 print("  ! %s：%s" % (os.path.basename(p)[:40], str(e)[:100]))
@@ -163,12 +197,13 @@ def main(argv=None) -> int:
     ap.add_argument("--video", action="store_true", help="清理已完成分P的原视频")
     ap.add_argument("--audio", action="store_true", help="清理临时音频缓存")
     ap.add_argument("--frames", action="store_true", help="清理未被 note.md 引用的候选帧")
-    ap.add_argument("--all", action="store_true", help="video + audio + frames 全清")
+    ap.add_argument("--tmpview", action="store_true", help="清理 notes/*/_tmpview 临时预览图")
+    ap.add_argument("--all", action="store_true", help="video + audio + frames + tmpview 全清")
     ap.add_argument("--yes", action="store_true", help="真删（不加只预览）")
     a = ap.parse_args(argv)
 
     if not (a.video or a.audio or a.all):
-        a.video = a.audio = a.frames = True     # 无参数时全部预览
+        a.video = a.audio = a.frames = a.tmpview = True     # 无参数时全部预览
 
     targets: list[str] = []
     refund = 0
@@ -189,8 +224,16 @@ def main(argv=None) -> int:
     if a.audio or a.all:
         auds = scan_audio()
         s = sum(_size(p) for p in auds)
-        print("【音频】可删 %d 个 / %.0f MB（转写结果已缓存，音频本身可弃）" % (len(auds), _mb(s)))
+        print("【音频】可删 %d 个 / %.0f MB（转写缓存 .json 会保留，音频本身可弃）" % (len(auds), _mb(s)))
         targets += auds
+        refund += s
+
+    if a.tmpview or a.all:
+        tv = scan_tmpview()
+        s = sum(_size(p) for p in tv)
+        print("【临时预览】可删 %d 个目录 / %.0f MB（notes/*/_tmpview，选帧时的放大截图）"
+              % (len(tv), _mb(s)))
+        targets += tv
         refund += s
 
     if a.frames or a.all:
