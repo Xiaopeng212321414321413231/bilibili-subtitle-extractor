@@ -319,7 +319,7 @@ def auto_chapters(segments: list[dict], duration: float, target: int = 0,
             continue
         head = _head_text(seg)
         chapters.append({
-            "title": _condense(head),
+            "title": _condense_auto(head),
             "start": round(seg[0]["from"], 2),
             "end": round(segments[b]["from"] if b < len(segments) else duration, 2),
             "first": head[:40],
@@ -379,6 +379,32 @@ def _condense(text: str, limit: int = 18) -> str:
         t = m.group(1)
     t = t.strip("，。！？、 ")
     return t[:limit] + ("…" if len(t) > limit else "")
+
+
+def _is_english(text: str, ratio: float = 0.5) -> bool:
+    """粗判是否英文段落：ASCII 字母占非空白字符的比例。
+
+    不做语言识别库那一套 —— 这里只需要区分「按字切」还是「按词切」。
+    """
+    letters = sum(1 for ch in text if ch.isascii() and ch.isalpha())
+    nonspace = sum(1 for ch in text if not ch.isspace())
+    return nonspace > 0 and letters / nonspace >= ratio
+
+
+def _condense_auto(text: str, limit_cn: int = 18, words_en: int = 9) -> str:
+    """按语言选截断方式。
+
+    中文一个字就是信息量，18 字刚好一句；英文 18 **字符**只有三个词，
+    出来就是 "Do you want to fin…" 这种废标题。所以英文按词数截。
+    """
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if _is_english(t):
+        ws = t.split()
+        head = " ".join(ws[:words_en])
+        return head + ("…" if len(ws) > words_en else "")
+    return _condense(t, limit_cn)
 
 
 def _keywords(chapter_blocks: list[dict], all_blocks: list[dict], top: int = 4) -> list[str]:
