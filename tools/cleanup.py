@@ -89,6 +89,30 @@ def scan_audio() -> list[str]:
             if os.path.isfile(os.path.join(d, f)) and f.lower().endswith((".m4a", ".mp3", ".webm", ".wav"))]
 
 
+def scan_frames() -> tuple[list[str], list[str]]:
+    """未写进 note.md 的候选帧。
+
+    抽帧是「每章抽 5 张、去重后留着让人挑」，最终一篇文章只用 8~10 张，
+    所以每篇都会剩下几十张没被引用的。这些图既不在 note.md 里，
+    HTML 里用的也是 base64 副本，删掉不影响任何已交付产物。
+
+    只处理**有 note.md** 的目录：没写完的笔记整份保留，别动。
+    """
+    safe, keep = [], []
+    import re
+    for note in glob.glob(os.path.join(ROOT, "notes", "*", "note.md")):
+        d = os.path.dirname(note)
+        try:
+            txt = open(note, encoding="utf-8").read()
+        except Exception:  # noqa: BLE001
+            continue
+        used = {os.path.normpath(os.path.join(d, m))
+                for m in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", txt)}
+        for p in glob.glob(os.path.join(d, "frames", "**", "*.jpg"), recursive=True):
+            (keep if os.path.normpath(p) in used else safe).append(p)
+    return safe, keep
+
+
 def to_recycle(paths: list[str]) -> int:
     """移进 Windows 回收站（可恢复）。失败则跳过并报数。"""
     if not paths:
@@ -119,12 +143,13 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="清理中间产物（默认只预览）")
     ap.add_argument("--video", action="store_true", help="清理已完成分P的原视频")
     ap.add_argument("--audio", action="store_true", help="清理临时音频缓存")
-    ap.add_argument("--all", action="store_true", help="video + audio")
+    ap.add_argument("--frames", action="store_true", help="清理未被 note.md 引用的候选帧")
+    ap.add_argument("--all", action="store_true", help="video + audio + frames 全清")
     ap.add_argument("--yes", action="store_true", help="真删（不加只预览）")
     a = ap.parse_args(argv)
 
     if not (a.video or a.audio or a.all):
-        a.video = a.audio = True        # 无参数时两样都预览
+        a.video = a.audio = a.frames = True     # 无参数时全部预览
 
     targets: list[str] = []
     refund = 0
@@ -147,6 +172,14 @@ def main(argv=None) -> int:
         s = sum(_size(p) for p in auds)
         print("【音频】可删 %d 个 / %.0f MB（转写结果已缓存，音频本身可弃）" % (len(auds), _mb(s)))
         targets += auds
+        refund += s
+
+    if a.frames or a.all:
+        drop, keep = scan_frames()
+        s = sum(_size(p) for p in drop)
+        print("【候选帧】可删 %d 张 / %.0f MB ｜ 保留 %d 张（note.md 实际引用的）"
+              % (len(drop), _mb(s), len(keep)))
+        targets += drop
         refund += s
 
     print()
